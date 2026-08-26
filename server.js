@@ -9,50 +9,41 @@ app.use(express.json());
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+  cors: { origin: "*" }
 });
 
+// Banco de dados em memória simples para testes (ou substitua por um banco real depois)
 const usuariosConectados = {};
 
 io.on('connection', (socket) => {
-  console.log('⚡ Um player se conectou. Socket ID:', socket.id);
+  console.log('Player conectado:', socket.id);
 
+  // Cadastro / Identificação do player ao abrir o app
   socket.on('registrar_usuario', (userId) => {
     usuariosConectados[userId] = socket.id;
     socket.join(`user_${userId}`);
-    console.log(`👤 Usuário registrado na sala: user_${userId}`);
+    console.log(`Usuário ${userId} registrado na sala user_${userId}`);
   });
 
   socket.on('disconnect', () => {
-    console.log('❌ Player desconectado:', socket.id);
+    console.log('Player desconectado:', socket.id);
   });
 });
 
+// Rota para o Dono aplicar a punição (chamada pelo painel ou API)
 app.post('/api/punir', (req, res) => {
-  const { userId, tipoPunicao, titulo, mensagem } = req.body;
+  const { userId, tipoPunicao, mensagem } = req.body;
 
-  if (!userId || !tipoPunicao) {
-    return res.status(400).json({ sucesso: false, erro: 'userId e tipoPunicao são obrigatórios!' });
-  }
-
+  // Dispara instantaneamente via Socket.io para quem está online
   io.to(`user_${userId}`).emit('receber_punicao', {
-    tipo: tipoPunicao,
-    titulo: titulo || 'Aviso do Administrador',
-    msg: mensagem || 'Você recebeu uma atualização de status.'
+    tipo: tipoPunicao, // 'BAN_GLOBAL', 'SUSPENSAO_SERVIDOR', 'SUSPENSAO_TEMPORADA'
+    msg: mensagem
   });
 
-  console.log(`🚨 Punição [${tipoPunicao}] enviada para o usuário: ${userId}`);
-  return res.json({ sucesso: true, mensagem: 'Aviso disparado em tempo real!' });
-});
-
-app.get('/', (req, res) => {
-  res.send('Servidor WGS Hardcore Socket.io Rodando Perfeitamente!');
+  return res.json({ sucesso: true, mensagem: "Punição enviada em tempo real!" });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+  console.log(`Servidor rodando na porta ${PORT}`);
 });
