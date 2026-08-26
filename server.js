@@ -15,23 +15,32 @@ const io = new Server(server, {
     }
 });
 
-// Mapeamento de usuários conectados: { userId: socketId }
+// BANCO DE DADOS EM MEMÓRIA DO SERVIDOR (Guarda os pontos 24h por dia)
+const baseDeDadosPontos = {};
+
+// Mapeamento de conexões ativas: userId -> socketId
 const usuariosConectados = {};
 
 io.on('connection', (socket) => {
-    console.log(`🔌 Novo usuário conectado: ${socket.id}`);
+    console.log(`🔌 Nova conexão Socket: ${socket.id}`);
 
-    // Registro do usuário na sala/socket dele
+    // Registro do usuário online
     socket.on('registrar_usuario', (userId) => {
         if (userId) {
             usuariosConectados[userId] = socket.id;
-            socket.join(userId); // Sala exclusiva do usuário
-            console.log(`✅ Usuário registrado: ${userId} (Socket ID: ${socket.id})`);
+            socket.join(userId);
+            
+            // Inicializa os pontos do usuário se não existirem
+            if (baseDeDadosPontos[userId] === undefined) {
+                baseDeDadosPontos[userId] = 0;
+            }
+
+            console.log(`✅ Usuário registrado: ${userId} | Pontos no servidor: ${baseDeDadosPontos[userId]}`);
         }
     });
 
+    // Limpeza ao desconectar
     socket.on('disconnect', () => {
-        // Remove da lista ao desconectar
         for (let [userId, socketId] of Object.entries(usuariosConectados)) {
             if (socketId === socket.id) {
                 delete usuariosConectados[userId];
@@ -44,62 +53,72 @@ io.on('connection', (socket) => {
 
 // ================= ROTAS DA API ================= //
 
-// Rota para verificar se o usuário ainda existe (evita login de banidos offline)
+// Rota para o app buscar os pontos e verificar o status assim que o player faz login
 app.get('/api/verificar-usuario', (req, res) => {
     const { userId } = req.query;
-    // Aqui você pode colocar sua lógica real checando a planilha, 
-    // por padrão simulamos que se passou o ID, ele existe (a menos que você remova)
     if (!userId) return res.json({ existe: false });
-    
-    // Retorna true (se quiser integrar com a planilha no futuro, ajusta aqui)
-    return res.json({ existe: true });
+
+    if (baseDeDadosPontos[userId] === undefined) {
+        baseDeDadosPontos[userId] = 0;
+    }
+
+    return res.json({
+        existe: true,
+        pontos: baseDeDadosPontos[userId]
+    });
 });
 
-// Rota central de Punições, Avisos e Distribuição de Pontos
+// Rota central: Gerencia Punições, Bans e Distribuição de Pontos
 app.post('/api/punir', (req, res) => {
     const { userId, tipoPunicao, quantidade, titulo, mensagem } = req.body;
 
-    console.log(`⚡ Comando recebido -> Tipo: ${tipoPunicao} | Alvo: ${userId} | Qtd: ${quantidade || 0}`);
+    console.log(`⚡ Ação: ${tipoPunicao} | Alvo: ${userId} | Qtd: ${quantidade || 0}`);
 
+    // LÓGICA DE PONTOS
     if (tipoPunicao === "ADICIONAR_PONTOS") {
+        const qtdAdicionar = parseInt(quantidade || 0);
+
         if (userId === "TODOS") {
-            // Envia os pontos para TODOS os clientes conectados
-            io.emit("receber_punicao", { 
-                tipo: tipoPunicao, 
-                quantidade: quantidade, 
-                titulo: titulo, 
-                msg: mensagem 
-            });
-            console.log(`🎁 Pontos globais enviados para TODOS: +${quantidade}`);
+            // Soma pontos para TODOS os usuários registrados no servidor (online e offline)
+            for (let idUser in baseDeDadosPontos) {
+                baseDeDadosPontos[idUser] += qtdAdicionar;
+            }
+            io.emit("receber_punicao", { tipo: tipoPunicao, quantidade: qtdAdicionar, titulo, msg: mensagem });
+            console.log(`🎁 +${qtdAdicionar} pontos somados globalmente para TODOS.`);
         } else {
-            // Envia para um usuário específico pelo ID
+            // Soma pontos para um usuário específico (mesmo offline)
+            if (baseDeDadosPontos[userId] === undefined) {
+                baseDeDadosPontos[userId] = 0;
+            }
+            baseDeDadosPontos[userId] += qtdAdicionar;
+
+            // Se estiver online, envia o sinal na hora via Socket
             const socketIdAlvo = usuariosConectados[userId];
             if (socketIdAlvo) {
-                io.to(socketIdAlvo).emit("receber_punicao", { 
-                    tipo: tipoPunicao, 
-                    quantidade: quantidade, 
-                    titulo: titulo, 
-                    msg: mensagem 
-                });
-                console.log(`🎁 Pontos enviados para o usuário ${userId}: +${quantidade}`);
+                io.to(socketIdAlvo).emit("receber_punicao", { tipo: tipoPunicao, quantidade: qtdAdicionar, titulo, msg: mensagem });
+                console.log(`🎁 +${qtdAdicionar} pontos entregues online para ${userId}. Total: ${baseDeDadosPontos[userId]}`);
             } else {
-                console.log(`⚠️ Tentou dar pontos para ${userId}, mas ele está offline/não conectado.`);
+                console.log(`💤 Usuário ${userId} está offline, mas os pontos foram salvos (${baseDeDadosPontos[userId]} pts).`);
             }
         }
-        return res.json({ sucesso: true, mensagem: "Pontos processados com sucesso!" });
+        return res.json({ sucesso: true });
     } 
-    
-    // Demais ações (Remoção de conta, suspensão, etc) que já funcionavam perfeitamente
+
+    // LÓGICA DE BANIMENTO / REMOÇÃO DE CONTA (Inviolável e funcionando)
     if (userId === "TODOS") {
         io.emit("receber_punicao", { tipo: tipoPunicao, titulo, msg: mensagem });
+        console.log(`🚨 Comando de banimento global enviado para TODOS.`);
     } else {
         const socketIdAlvo = usuariosConectados[userId];
         if (socketIdAlvo) {
             io.to(socketIdAlvo).emit("receber_punicao", { tipo: tipoPunicao, titulo, msg: mensagem });
+            console.log(`🚨 Comando de remoção enviado exatamente para o usuário: ${userId}`);
+        } else {
+            console.log(`⚠️ Tentou banir ${userId}, mas ele não está conectado no momento.`);
         }
     }
 
-    return res.json({ sucesso: true, mensagem: "Comando executado com sucesso!" });
+    return res.json({ sucesso: true });
 });
 
 const PORT = process.env.PORT || 3000;
