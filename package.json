@@ -1,14 +1,16 @@
 {
   "name": "wgs-servidor",
   "version": "1.0.0",
-  "description": "Servidor Socket.io para WGS Hardcore",
+  "description": "Servidor Socket.io e NeDB para WGS Hardcore",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "express": "^4.19.2",
+    "nedb": "^1.8.0",
     "socket.io": "^4.7.5"
   }
 }
